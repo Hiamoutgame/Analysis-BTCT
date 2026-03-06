@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Meilleurs",
-  description: "Meilleurs financial analysis platform",
+  title: "LumiFin",
+  description: "LumiFin - financial analysis platform",
 };
 
 export default function RootLayout({
