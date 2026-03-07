@@ -1,5 +1,10 @@
 import type { JwtPayload } from "@/interface/auth/auth.interface";
 
+function getStringClaim(payload: JwtPayload, key: string): string | null {
+  const value = payload[key];
+  return typeof value === "string" ? value : null;
+}
+
 /**
  * Decode JWT token without verification
  * @param token - JWT token string
@@ -48,7 +53,11 @@ export function getRoleFromToken(token: string): string | null {
   if (!payload) return null;
 
   return (
-    payload["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] ||
+    (typeof payload.role === "string" ? payload.role : null) ||
+    getStringClaim(
+      payload,
+      "http://schemas.microsoft.com/ws/2008/06/identity/claims/role",
+    ) ||
     null
   );
 }
@@ -63,9 +72,12 @@ export function getUserIdFromToken(token: string): string | null {
   if (!payload) return null;
 
   return (
-    payload[
-      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"
-    ] || null
+    (typeof payload.sub === "string" ? payload.sub : null) ||
+    getStringClaim(
+      payload,
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier",
+    ) ||
+    null
   );
 }
 
@@ -79,8 +91,11 @@ export function getEmailFromToken(token: string): string | null {
   if (!payload) return null;
 
   return (
-    payload[
-      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
-    ] || null
+    (typeof payload.email === "string" ? payload.email : null) ||
+    getStringClaim(
+      payload,
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+    ) ||
+    null
   );
 }

@@ -1,3 +1,6 @@
+﻿"use client";
+
+import { useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,16 +22,22 @@ type AuthField = {
   optional?: boolean;
 };
 
+type FormValues = Record<string, string>;
+
 type AuthCardProps = {
   title: string;
   description: string;
   submitLabel: string;
+  submittingLabel?: string;
   fields: AuthField[];
   footerPrefix: string;
   footerLinkLabel: string;
   footerLinkHref: string;
   auxiliaryActionLabel?: string;
   auxiliaryActionHref?: string;
+  onSubmit?: (values: FormValues) => Promise<void>;
+  submitError?: string | null;
+  submitSuccess?: string | null;
 };
 
 const passwordMaskIcon = (
@@ -44,13 +53,51 @@ export default function AuthCard({
   title,
   description,
   submitLabel,
+  submittingLabel,
   fields,
   footerPrefix,
   footerLinkLabel,
   footerLinkHref,
   auxiliaryActionLabel,
   auxiliaryActionHref,
+  onSubmit,
+  submitError,
+  submitSuccess,
 }: AuthCardProps) {
+  const initialValues = useMemo(
+    () =>
+      fields.reduce<FormValues>((result, field) => {
+        result[field.name] = "";
+        return result;
+      }, {}),
+    [fields]
+  );
+
+  const [formValues, setFormValues] = useState<FormValues>(initialValues);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!onSubmit) {
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      await onSubmit(formValues);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function handleChange(name: string, value: string) {
+    setFormValues((current) => ({
+      ...current,
+      [name]: value,
+    }));
+  }
+
   return (
     <Card className="auth-card">
       <CardHeader className="space-y-2 p-0">
@@ -59,7 +106,7 @@ export default function AuthCard({
       </CardHeader>
 
       <CardContent className="p-0">
-        <form className="auth-form">
+        <form className="auth-form" onSubmit={handleSubmit}>
           {fields.map((field) => {
             const isPassword = field.type === "password";
 
@@ -77,6 +124,9 @@ export default function AuthCard({
                     type={field.type ?? "text"}
                     placeholder={field.placeholder}
                     autoComplete={field.autoComplete}
+                    value={formValues[field.name] ?? ""}
+                    onChange={(event) => handleChange(field.name, event.target.value)}
+                    required={!field.optional}
                   />
                   {isPassword ? (
                     <span className="icon-button" aria-hidden="true">
@@ -96,8 +146,11 @@ export default function AuthCard({
             </p>
           ) : null}
 
-          <Button className="auth-submit" size="lg" type="submit">
-            {submitLabel}
+          {submitError ? <p className="text-sm text-rose-600">{submitError}</p> : null}
+          {submitSuccess ? <p className="text-sm text-emerald-700">{submitSuccess}</p> : null}
+
+          <Button className="auth-submit" size="lg" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? submittingLabel || "Submitting..." : submitLabel}
           </Button>
         </form>
       </CardContent>

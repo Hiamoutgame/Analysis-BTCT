@@ -1,11 +1,13 @@
-﻿import os
+import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Protocol
-from urllib.parse import quote_plus
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlparse, urlunparse
 
+from dotenv import load_dotenv
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+load_dotenv()
 
 class AppWithEventHandlers(Protocol):
     def add_event_handler(self, event_type: str, func: Callable[[], Awaitable[Any]]) -> None:
@@ -40,10 +42,37 @@ def _bool_env(*keys: str, default: bool) -> bool:
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_asyncpg_url(raw_url: str) -> str:
+    parsed = urlparse(raw_url)
+    query_items = parse_qsl(parsed.query, keep_blank_values=True)
+    normalized_query: list[tuple[str, str]] = []
+    ssl_value: Optional[str] = None
+    has_ssl = False
+
+    for key, value in query_items:
+        if key == "ssl":
+            has_ssl = True
+            normalized_query.append((key, value))
+            continue
+        if key == "sslmode":
+            ssl_value = value
+            continue
+        normalized_query.append((key, value))
+
+    if ssl_value is not None and not has_ssl:
+        normalized_query.append(("ssl", ssl_value))
+
+    return urlunparse(parsed._replace(query=urlencode(normalized_query, doseq=True)))
+
+
 def build_database_url() -> str:
     direct_url = _first_env("DATABASE_URL", "POSTGRES_DSN", "SQLALCHEMY_DATABASE_URI")
     if direct_url:
-        return direct_url
+        if direct_url.startswith("postgresql://") and not direct_url.startswith("postgresql+asyncpg://"):
+            direct_url = direct_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if direct_url.startswith("postgres://"):
+            direct_url = direct_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        return _normalize_asyncpg_url(direct_url)
 
     host = _first_env("DB_HOST", "POSTGRES_HOST", "PGHOST", "DB_SERVER")
     port = _first_env("DB_PORT", "POSTGRES_PORT", "PGPORT") or "5432"
@@ -75,7 +104,7 @@ def build_database_url() -> str:
 
     url = f"postgresql+asyncpg://{user_part}:{password_part}@{host}:{port}/{database_part}"
     if ssl_mode:
-        url = f"{url}?sslmode={quote_plus(ssl_mode)}"
+        url = f"{url}?ssl={quote_plus(ssl_mode)}"
 
     return url
 
@@ -160,3 +189,4 @@ def register_database_lifecycle(app: AppWithEventHandlers) -> None:
 
     app.add_event_handler("startup", _startup)
     app.add_event_handler("shutdown", _shutdown)
+

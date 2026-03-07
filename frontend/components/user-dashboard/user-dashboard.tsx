@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { analyticsBars, dashboardStats, progressSegments, projectTasks, reminderInfo, teamActivities } from "@/constants/user-dashboard.data";
 import DashboardSidebar from "@/components/homepage/dashboard-sidebar";
 import {
@@ -16,7 +17,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getMe, logout, refresh } from "@/lib/auth-api";
+import { clearAuthTokens, getAccessToken, getRefreshToken, setAuthTokens } from "@/lib/auth-storage";
 import { cn } from "@/lib/utils";
+import { getEmailFromToken } from "@/utils";
 import { useTimeTracker } from "./use-time-tracker";
 
 const barStyleMap = {
@@ -60,10 +64,124 @@ function SegmentLegend() {
 }
 
 export default function UserDashboard() {
+  const router = useRouter();
   const [activeItem, setActiveItem] = useState("Dashboard");
   const [searchValue, setSearchValue] = useState("");
   const [isMeetingStarted, setIsMeetingStarted] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [currentName, setCurrentName] = useState("LumiFin User");
+  const [currentEmail, setCurrentEmail] = useState("user@lumifin.local");
   const { formattedTime, isRunning, stop, toggle } = useTimeTracker();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function bootstrapAuth(): Promise<void> {
+      const accessToken = getAccessToken();
+      const refreshToken = getRefreshToken();
+
+      if (!accessToken && !refreshToken) {
+        clearAuthTokens();
+        router.replace("/auth/sign-in");
+        return;
+      }
+
+      try {
+        let tokenToUse = accessToken;
+
+        if (!tokenToUse && refreshToken) {
+          const refreshed = await refresh(refreshToken);
+          setAuthTokens({
+            accessToken: refreshed.access_token,
+            refreshToken: refreshed.refresh_token,
+          });
+          tokenToUse = refreshed.access_token;
+        }
+
+        if (!tokenToUse) {
+          throw new Error("Missing access token");
+        }
+
+        const me = await getMe(tokenToUse);
+        if (!isMounted) {
+          return;
+        }
+
+        setCurrentName(me.full_name || "LumiFin User");
+        setCurrentEmail(me.email || getEmailFromToken(tokenToUse) || "user@lumifin.local");
+      } catch {
+        if (refreshToken) {
+          try {
+            const refreshed = await refresh(refreshToken);
+            setAuthTokens({
+              accessToken: refreshed.access_token,
+              refreshToken: refreshed.refresh_token,
+            });
+            const me = await getMe(refreshed.access_token);
+            if (!isMounted) {
+              return;
+            }
+            setCurrentName(me.full_name || "LumiFin User");
+            setCurrentEmail(me.email || getEmailFromToken(refreshed.access_token) || "user@lumifin.local");
+          } catch {
+            clearAuthTokens();
+            router.replace("/auth/sign-in");
+            return;
+          }
+        } else {
+          clearAuthTokens();
+          router.replace("/auth/sign-in");
+          return;
+        }
+      } finally {
+        if (isMounted) {
+          setIsAuthLoading(false);
+        }
+      }
+    }
+
+    void bootstrapAuth();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
+  async function handleLogout(): Promise<void> {
+    const refreshToken = getRefreshToken();
+    try {
+      if (refreshToken) {
+        await logout(refreshToken);
+      }
+    } catch {
+      // Ignore logout API errors and clear local session anyway.
+    } finally {
+      clearAuthTokens();
+      router.push("/auth/sign-in");
+    }
+  }
+
+  function handleSidebarSelect(label: string): void {
+    if (label.toLowerCase() === "logout") {
+      void handleLogout();
+      return;
+    }
+    setActiveItem(label);
+  }
+
+  const userInitials = useMemo(() => {
+    const source = currentName.trim() || currentEmail.trim();
+    if (!source) {
+      return "LF";
+    }
+
+    const parts = source.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+
+    return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+  }, [currentEmail, currentName]);
 
   const progressBackground = useMemo(() => {
     const stops = progressSegments.reduce<{ color: string; from: number; to: number }[]>(
@@ -96,11 +214,19 @@ export default function UserDashboard() {
     return projectTasks.filter((task) => task.title.toLowerCase().includes(keyword));
   }, [searchValue]);
 
+  if (isAuthLoading) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-slate-100 p-6">
+        <p className="text-sm text-slate-600">Loading your dashboard...</p>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-slate-100 p-2 md:p-5">
       <div className="mx-auto w-full max-w-[1500px] rounded-[28px] border border-slate-200 bg-slate-50 p-3 shadow-sm md:p-4">
         <div className="grid gap-4 lg:grid-cols-[264px_minmax(0,1fr)]">
-          <DashboardSidebar activeItem={activeItem} onItemSelect={setActiveItem} />
+          <DashboardSidebar activeItem={activeItem} onItemSelect={handleSidebarSelect} />
 
           <section className="space-y-4">
             <Card className="rounded-3xl border-slate-200 bg-white p-4 shadow-sm">
@@ -139,11 +265,11 @@ export default function UserDashboard() {
 
                   <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1.5">
                     <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-900 text-xs font-semibold text-white">
-                      TM
+                      {userInitials}
                     </span>
                     <div className="hidden pr-1 sm:block">
-                      <p className="text-sm font-semibold text-slate-900">Totok Michael</p>
-                      <p className="text-xs text-slate-500">tmichael20@mail.com</p>
+                      <p className="text-sm font-semibold text-slate-900">{currentName}</p>
+                      <p className="text-xs text-slate-500">{currentEmail}</p>
                     </div>
                   </div>
                 </div>
